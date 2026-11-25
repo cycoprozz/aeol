@@ -40,6 +40,8 @@
 <div id="overlay"><h1>VANTAGE</h1><div class="sub">A TIDALLY-LOCKED WORLD</div><div class="enter">CLICK TO ENTER</div><div class="keys">WASD to walk · drag / move mouse to look · ESC to release</div></div>
 
 <script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script src="SkeletonUtils.js"></script>
 <script>
 window.onerror = function(m){ window.__aeolError = String(m); };
 const canvas = document.getElementById('scene');
@@ -177,51 +179,9 @@ for (let i=0;i<WN;i++){ wpos[i*3]=-45+Math.random()*90; wpos[i*3+1]=0.3+Math.ran
 const wgeom = new THREE.BufferGeometry(); wgeom.setAttribute('position', new THREE.BufferAttribute(wpos,3));
 const wind = new THREE.Points(wgeom, new THREE.PointsMaterial({ size:0.06, color:0x7ff0ff, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false })); scene.add(wind);
 
-// ---- articulated humans ----
-const SKINS = [0xd8c4a8, 0xc8906a, 0x8a5a3a, 0x6b4433, 0xe8d0b0, 0xa8744f];
-const HAIRS = [0x1a1410, 0x3a2a18, 0x6a4a2a, 0x8a6a3a, 0x0e0e12, 0x5a5a62, 0x2a1a10];
-function limb(geo, mat){ const m=new THREE.Mesh(geo, mat); m.castShadow=true; return m; }
-function makeHuman(o){
-  const root = new THREE.Group();
-  const cloth = new THREE.MeshStandardMaterial({ color:o.color, roughness:0.8 });
-  const skinM = new THREE.MeshStandardMaterial({ color:o.skin, roughness:0.65 });
-  const hairM = new THREE.MeshStandardMaterial({ color:o.hair, roughness:0.9 });
-  const dark = new THREE.MeshStandardMaterial({ color:0x15161c, roughness:0.6 });
-
-  const hips = new THREE.Group(); hips.position.y = 0.9; root.add(hips);
-
-  const torso = limb(new THREE.CylinderGeometry(0.13, 0.19, 0.52, 12), cloth); torso.position.y = 0.26; hips.add(torso);
-
-  const headG = new THREE.Group(); headG.position.y = 0.52; hips.add(headG);
-  const head = limb(new THREE.SphereGeometry(0.135, 16, 16), skinM); head.position.y = 0.17;
-  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 12, 0, Math.PI*2, 0, Math.PI*0.55), hairM); hairCap.position.y = 0.18;
-  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), dark); eyeL.position.set(-0.045, 0.18, 0.125);
-  const eyeR = eyeL.clone(); eyeR.position.x = 0.045;
-  headG.add(head, hairCap, eyeL, eyeR);
-
-  function arm(side){
-    const g = new THREE.Group(); g.position.set(side*0.16, 0.5, 0);
-    const upper = limb(new THREE.CylinderGeometry(0.035, 0.045, 0.26, 8), cloth); upper.position.y = -0.13;
-    const elbow = new THREE.Group(); elbow.position.y = -0.26;
-    const fore = limb(new THREE.CylinderGeometry(0.03, 0.035, 0.24, 8), cloth); fore.position.y = -0.12;
-    const hand = limb(new THREE.SphereGeometry(0.04, 8, 8), skinM); hand.position.y = -0.24;
-    elbow.add(fore, hand); g.add(upper, elbow); hips.add(g);
-    return { g:g, elbow:elbow };
-  }
-  function leg(side){
-    const g = new THREE.Group(); g.position.set(side*0.095, 0, 0);
-    const thigh = limb(new THREE.CylinderGeometry(0.055, 0.05, 0.45, 8), cloth); thigh.position.y = -0.22;
-    const knee = new THREE.Group(); knee.position.y = -0.45;
-    const shin = limb(new THREE.CylinderGeometry(0.045, 0.04, 0.42, 8), cloth); shin.position.y = -0.2;
-    const foot = limb(new THREE.BoxGeometry(0.07, 0.06, 0.16), dark); foot.position.set(0, -0.42, 0.05);
-    knee.add(shin, foot); g.add(thigh, knee); hips.add(g);
-    return { g:g, knee:knee };
-  }
-  const armL = arm(-1), armR = arm(1), legL = leg(-1), legR = leg(1);
-  root.userData = { hips, armL, armR, legL, legR };
-  root.scale.setScalar(o.scale || 1);
-  return root;
-}
+// ---- GLB character NPCs ----
+let baseGltf = null, walkClip = null, MODEL_SCALE = 1, leafletNpc = null;
+const npcs = [], ctls = {};
 
 function npcLabel(name, action, color){
   const c=document.createElement('canvas'); c.width=512; c.height=96; const g=c.getContext('2d');
@@ -233,40 +193,6 @@ function npcLabel(name, action, color){
   s.scale.set(3.8, 0.72, 1); return s;
 }
 
-const npcs = [];
-function addNPC(o){
-  const g = makeHuman(o); g.position.set(o.x, 0, o.z); scene.add(g);
-  if (o.name){ const lbl=npcLabel(o.name, o.action, o.color); lbl.position.y=2.1; g.add(lbl); }
-  const ctl = { group:g, wps:o.waypoints, i:0, speed:o.speed||1.7, phase:Math.random()*6 };
-  ctl.update = function(t, dt){
-    const target=this.wps[this.i], dx=target[0]-this.group.position.x, dz=target[1]-this.group.position.z;
-    const dist=Math.hypot(dx,dz);
-    if (dist < 0.4){ this.i=(this.i+1)%this.wps.length; }
-    else { const step=Math.min(dist, this.speed*dt); this.group.position.x += dx/dist*step; this.group.position.z += dz/dist*step; this.group.rotation.y = Math.atan2(dx, dz); }
-    const u=this.group.userData, w=t*6+this.phase, s=Math.sin(w);
-    u.legL.g.rotation.x = s*0.5; u.legR.g.rotation.x = -s*0.5;
-    u.legL.knee.rotation.x = Math.max(0, Math.sin(w+2.2))*0.6; u.legR.knee.rotation.x = Math.max(0, Math.sin(w+2.2+Math.PI))*0.6;
-    u.armL.g.rotation.x = -s*0.45; u.armR.g.rotation.x = s*0.45;
-    u.armL.elbow.rotation.x = Math.max(0,-s)*0.3; u.armR.elbow.rotation.x = Math.max(0,s)*0.3;
-    u.hips.position.y = 0.9 + Math.abs(s)*0.03; u.hips.rotation.x = 0.05; u.hips.rotation.z = s*0.02;
-  };
-  npcs.push(ctl); return ctl;
-}
-
-addNPC({ x:-12, z:18, color:0xffd66e, skin:0xd8c4a8, hair:0x1a1410, name:'Elian Voss', action:'inspecting the escapement', speed:1.5, waypoints:[[-16,20],[-8,12],[-3,5],[3,5],[8,12]] });
-const mara = addNPC({ x:20, z:6, color:0xff9a4d, skin:0xc8906a, hair:0x0e0e12, name:'Mara Solen', action:'petitioning the Vantarch', speed:1.1, waypoints:[[22,8],[28,4],[24,-6],[18,-2]] });
-addNPC({ x:-24, z:-4, color:0x8fd0ff, skin:0xe8d0b0, hair:0x6a4a2a, name:'Iska Tern', action:'the Engine pulses twice', speed:1.9, waypoints:[[-26,-6],[-30,2],[-24,10]] });
-addNPC({ x:-27, z:-10, color:0x6fa8dc, skin:0xa8744f, hair:0x5a5a62, name:'Lector Verys', action:'sealing the chamber', speed:0.9, waypoints:[[-28,-10],[-24,-4]] });
-addNPC({ x:16, z:-12, color:0xe0cfa0, skin:0x8a5a3a, hair:0x3a2a18, name:'Vantarch Leth', action:'wardens tear down leaflets', speed:1.2, waypoints:[[18,-14],[22,-22],[14,-26]] });
-addNPC({ x:-14, z:26, color:0xc0a060, skin:0x6b4433, hair:0x2a1a10, name:'Archwright Corval', action:'concealing the fault', speed:0.7, waypoints:[[-16,26],[-10,22]] });
-const leafletNpc = addNPC({ x:-34, z:-26, color:0x7ff0ff, skin:0xd8c4a8, hair:0x1a1410, name:'An Unwound hand', action:'tacking a leaflet', speed:2.3, waypoints:[[-36,-28],[-30,-36],[-24,-30],[-32,-22]] });
-const citizenClothes=[0x9aa4b8,0xa8b0c0,0x8b95aa,0x7a6a5a,0x5a6a7a,0x6a5a4a];
-for (let i=0;i<8;i++){
-  const wps=[]; for(let j=0;j<4;j++){ const a=Math.random()*Math.PI*2, r=8+Math.random()*16; wps.push([Math.cos(a)*r, Math.sin(a)*r]); }
-  addNPC({ x:wps[0][0], z:wps[0][1], color:citizenClothes[i%6], skin:SKINS[Math.floor(Math.random()*SKINS.length)], hair:HAIRS[Math.floor(Math.random()*HAIRS.length)], waypoints:wps, speed:1.2+Math.random()*0.9, scale:0.95+Math.random()*0.1 });
-}
-
-// Mara's crystal cart
 function crystalCart(){
   const g=new THREE.Group();
   const base=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.5,1.2), new THREE.MeshStandardMaterial({ color:0x3a2f22 })); base.position.y=0.38; base.castShadow=true;
@@ -276,7 +202,59 @@ function crystalCart(){
   const gl=glowSprite('#ff9a4d',1.7); gl.position.y=1.0;
   g.add(base, wheel, wheel2, crystal, gl); return g;
 }
-const cart = crystalCart(); cart.position.set(0,0,0.95); mara.group.add(cart);
+
+function spawnNPC(def){
+  const clone = THREE.SkeletonUtils.clone(baseGltf.scene);
+  clone.scale.setScalar(MODEL_SCALE * (def.scale || 1));
+  const root = new THREE.Group(); root.add(clone); root.position.set(def.x, 0, def.z); scene.add(root);
+  const mixer = new THREE.AnimationMixer(clone);
+  if (walkClip){ const action = mixer.clipAction(walkClip); action.play(); action.timeScale = (def.speed||1.7)/1.6; }
+  if (def.name){ const lbl = npcLabel(def.name, def.action, def.color); lbl.position.y = 2.3; root.add(lbl); }
+  const ctl = { group:root, mixer, wps:def.waypoints, i:0, speed:def.speed||1.7 };
+  ctl.update = function(t, dt){
+    const target=this.wps[this.i], dx=target[0]-this.group.position.x, dz=target[1]-this.group.position.z;
+    const dist=Math.hypot(dx,dz);
+    if (dist < 0.4){ this.i=(this.i+1)%this.wps.length; }
+    else { const step=Math.min(dist, this.speed*dt); this.group.position.x += dx/dist*step; this.group.position.z += dz/dist*step; this.group.rotation.y = Math.atan2(dx, dz); }
+    this.mixer.update(dt);
+  };
+  npcs.push(ctl); if (def.id) ctls[def.id] = ctl; return ctl;
+}
+
+const npcDefs = [
+  { x:-12, z:18, name:'Elian Voss', action:'inspecting the escapement', color:'#ffd66e', speed:1.5, waypoints:[[-16,20],[-8,12],[-3,5],[3,5],[8,12]] },
+  { id:'mara', x:20, z:6, name:'Mara Solen', action:'petitioning the Vantarch', color:'#ff9a4d', speed:1.1, waypoints:[[22,8],[28,4],[24,-6],[18,-2]] },
+  { x:-24, z:-4, name:'Iska Tern', action:'the Engine pulses twice', color:'#8fd0ff', speed:1.9, waypoints:[[-26,-6],[-30,2],[-24,10]] },
+  { x:-27, z:-10, name:'Lector Verys', action:'sealing the chamber', color:'#6fa8dc', speed:0.9, waypoints:[[-28,-10],[-24,-4]] },
+  { x:16, z:-12, name:'Vantarch Leth', action:'wardens tear down leaflets', color:'#e0cfa0', speed:1.2, waypoints:[[18,-14],[22,-22],[14,-26]] },
+  { x:-14, z:26, name:'Archwright Corval', action:'concealing the fault', color:'#c0a060', speed:0.7, waypoints:[[-16,26],[-10,22]] },
+  { id:'leaflet', x:-34, z:-26, name:'An Unwound hand', action:'tacking a leaflet', color:'#7ff0ff', speed:2.3, waypoints:[[-36,-28],[-30,-36],[-24,-30],[-32,-22]] }
+];
+for (let i=0;i<8;i++){
+  const wps=[]; for(let j=0;j<4;j++){ const a=Math.random()*Math.PI*2, r=8+Math.random()*16; wps.push([Math.cos(a)*r, Math.sin(a)*r]); }
+  npcDefs.push({ x:wps[0][0], z:wps[0][1], waypoints:wps, speed:1.2+Math.random()*0.9, scale:0.95+Math.random()*0.1 });
+}
+
+const loader = new THREE.GLTFLoader();
+loader.load('soldier.glb',
+  function(gltf){
+    baseGltf = gltf;
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.traverse(o => { if (o.isMesh && o.geometry) o.geometry.computeBoundingBox(); });
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const h = Math.max(0.001, box.max.y - box.min.y);
+    MODEL_SCALE = 1.78 / h;
+    const clips = gltf.animations || [];
+    walkClip = clips.find(c=>/walk/i.test(c.name)) || clips.find(c=>/run/i.test(c.name)) || clips[0] || null;
+    for (const def of npcDefs) spawnNPC(def);
+    const cart = crystalCart(); cart.position.set(0,0,0.95);
+    if (ctls.mara) ctls.mara.group.add(cart);
+    leafletNpc = ctls.leaflet || null;
+    window.__gltfInfo = { loaded:true, height: Math.round(h*100)/100, scale: Math.round(MODEL_SCALE*100)/100, clips: clips.map(c=>c.name), walk: walkClip?walkClip.name:null, npcs: npcs.length };
+  },
+  undefined,
+  function(err){ window.__gltfError = String(err); }
+);
 
 // ---- leaflets ----
 const leaflets = []; let leafletTimer = 0;
@@ -325,7 +303,7 @@ function tick(){
   hand.rotation.z = t*0.25;
   for (const n of npcs) n.update(t, dt);
   leafletTimer += dt;
-  if (leafletTimer > 2.8){ leafletTimer=0;
+  if (leafletTimer > 2.8 && leafletNpc){ leafletTimer=0;
     const l=new THREE.Mesh(new THREE.PlaneGeometry(0.3,0.42), new THREE.MeshBasicMaterial({ color:0x7ff0ff, side:THREE.DoubleSide }));
     l.position.copy(leafletNpc.group.position); l.position.y+=0.4; l.rotation.y=Math.random()*Math.PI;
     scene.add(l); leaflets.push(l); if (leaflets.length>50){ const old=leaflets.shift(); scene.remove(old); }
@@ -352,7 +330,7 @@ window.__renderer=renderer; window.__scene=scene; window.__camera=camera;
 (function(){
   let avgLuma=0;
   try { const cc=document.createElement('canvas'); cc.width=64; cc.height=64; const g=cc.getContext('2d'); g.drawImage(renderer.domElement,0,0,64,64); const d=g.getImageData(0,0,64,64).data; let s=0; for(let i=0;i<d.length;i+=4) s+=(d[i]+d[i+1]+d[i+2])/3; avgLuma=Math.round(s/(64*64)); } catch(e){}
-  window.__worldInfo = { rendered:true, avgLuma: avgLuma, npcs: npcs.length, buildings: buildings.length, shadows: renderer.shadowMap.enabled, size:[renderer.domElement.width, renderer.domElement.height] };
+  window.__worldInfo = { rendered:true, avgLuma: avgLuma, buildings: buildings.length, shadows: renderer.shadowMap.enabled, size:[renderer.domElement.width, renderer.domElement.height] };
 })();
 
 window.addEventListener('resize', function(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
