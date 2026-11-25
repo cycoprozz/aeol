@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AEOL — a tidally-locked world</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #04060d; font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; color-scheme: dark; }
+  #scene { position: fixed; inset: 0; display: block; touch-action: none; }
+  .hud { position: fixed; z-index: 10; color: var(--foreground, #e8ecf4); pointer-events: none; }
+  #title { top: 18px; left: 22px; }
+  #title h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: .22em; }
+  #title .sub { margin-top: 3px; font-size: 11px; letter-spacing: .14em; color: var(--muted-foreground, #8b95aa); }
+  #legend { bottom: 18px; left: 22px; font-size: 12px; line-height: 1.85; color: var(--muted-foreground, #b7c0d2); background: rgba(8,10,18,.6); border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 11px; padding: 12px 16px; backdrop-filter: blur(8px); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  #hint { bottom: 18px; right: 22px; font-size: 11px; color: var(--muted-foreground, #9aa4b8); background: rgba(8,10,18,.5); border: 1px solid var(--border, rgba(255,255,255,.1)); border-radius: 8px; padding: 8px 12px; }
+  #panel { position: fixed; z-index: 20; top: 50%; right: 22px; transform: translateY(-50%); width: 300px; max-width: 86vw; color: var(--foreground, #e8ecf4); background: rgba(10,12,22,.8); border: 1px solid var(--border, rgba(255,255,255,.14)); border-radius: 14px; padding: 18px; backdrop-filter: blur(10px); display: none; }
+  #panel .close { float: right; cursor: pointer; opacity: .55; font-size: 17px; line-height: 1; }
+  #panel h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: .04em; }
+  #panel .tag { font-size: 10.5px; color: var(--accent, #7ff0ff); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 4px; }
+  #panel p { margin: 10px 0 0; font-size: 13px; line-height: 1.55; color: var(--muted-foreground, #c3cbdd); }
+  #panel .people { margin-top: 12px; font-size: 11.5px; line-height: 1.5; color: var(--muted-foreground, #9aa4b8); }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="title" class="hud"><h1>AEOL</h1><div class="sub">A TIDALLY-LOCKED WORLD · CYCLE 2</div></div>
+<div id="legend" class="hud">
+  <span class="dot" style="background:#ff9a4d"></span>Sunward — scorched day side<br>
+  <span class="dot" style="background:#ffd66e"></span>The Meridian — habitable twilight band<br>
+  <span class="dot" style="background:#5aa9ff"></span>Frostward — frozen night side<br>
+  <span class="dot" style="background:#7ff0ff"></span>The Aeolian wind
+</div>
+<div id="hint" class="hud">drag to orbit · scroll to zoom · click a city</div>
+<div id="panel"><span class="close">✕</span><div class="tag" id="p-tag"></div><h2 id="p-name"></h2><p id="p-desc"></p><div class="people" id="p-people"></div></div>
+
+<script src="three.min.js"></script>
+<script>
+window.onerror = function(m){ window.__aeolError = String(m); };
+const canvas = document.getElementById('scene');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+} catch(e) { window.__aeolError = 'WebGL init failed: ' + e.message; throw e; }
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace; else renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 500);
+const sph = { theta: 0.3, phi: 1.35, radius: 15 };
+
+// ---- lights ----
+scene.add(new THREE.AmbientLight(0x1a2a3a, 0.5));
+const sunLight = new THREE.DirectionalLight(0xffe3b8, 2.4); sunLight.position.set(40, 6, 0); scene.add(sunLight);
+const nightFill = new THREE.PointLight(0x3a5aff, 1.2, 90); nightFill.position.set(-40, 0, 0); scene.add(nightFill);
+
+// ---- stars ----
+(function(){
+  const N = 1800, pos = new Float32Array(N*3);
+  for (let i=0;i<N;i++){ const r=60+Math.random()*60, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+    pos[i*3]=r*Math.sin(ph)*Math.cos(th); pos[i*3+1]=r*Math.sin(ph)*Math.sin(th); pos[i*3+2]=r*Math.cos(ph); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size:.35, sizeAttenuation:true, color:0xcfd8ff, transparent:true, opacity:.85, depthWrite:false })));
+})();
+
+// ---- planet ----
+function planetTexture(){
+  const c = document.createElement('canvas'); c.width=1024; c.height=512; const g=c.getContext('2d');
+  g.fillStyle='#2a3240'; g.fillRect(0,0,1024,512);
+  for (let i=0;i<9000;i++){ const v=Math.floor(40+Math.random()*60); g.fillStyle='rgba('+v+','+(v+8)+','+(v+22)+',0.12)'; g.fillRect(Math.random()*1024, Math.random()*512, 1+Math.random()*3, 1+Math.random()*3); }
+  return new THREE.CanvasTexture(c);
+}
+const planet = new THREE.Mesh(new THREE.SphereGeometry(5, 96, 96),
+  new THREE.MeshStandardMaterial({ map: planetTexture(), color: 0x8fa3b8, roughness: 0.95, metalness: 0.05 }));
+scene.add(planet);
+
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(5.28, 96, 96),
+  new THREE.MeshBasicMaterial({ color: 0x7ff0ff, transparent: true, opacity: 0.12, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(atmo);
+
+function glowSprite(color, size){
+  const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
+  const grd=g.createRadialGradient(64,64,0,64,64,64); grd.addColorStop(0,'rgba(255,255,255,1)'); grd.addColorStop(0.25,color); grd.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grd; g.fillRect(0,0,128,128);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, blending:THREE.AdditiveBlending, depthWrite:false }));
+  s.scale.set(size,size,1); return s;
+}
+
+// ---- the Sunstill ----
+const sun = new THREE.Mesh(new THREE.SphereGeometry(1.1, 32, 32), new THREE.MeshBasicMaterial({ color: 0xfff6dd }));
+sun.position.set(34, 5, 0); scene.add(sun);
+const sunGlow = glowSprite('#ffe9a8', 13); sunGlow.position.set(34,5,0); scene.add(sunGlow);
+
+// ---- the Meridian (habitable terminator ring) ----
+const meridian = new THREE.Mesh(new THREE.TorusGeometry(5.02, 0.10, 24, 200),
+  new THREE.MeshBasicMaterial({ color: 0xffd66e, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+meridian.rotation.y = Math.PI/2; scene.add(meridian);
+
+// ---- the Aeolian wind ----
+const WN = 1600, wpos = new Float32Array(WN*3);
+for (let i=0;i<WN;i++){ const a=Math.random()*Math.PI*2, r=5.16+(Math.random()-0.5)*0.55;
+  wpos[i*3]=(Math.random()-0.5)*0.8; wpos[i*3+1]=r*Math.cos(a); wpos[i*3+2]=r*Math.sin(a); }
+const wgeom = new THREE.BufferGeometry(); wgeom.setAttribute('position', new THREE.BufferAttribute(wpos,3));
+const wind = new THREE.Points(wgeom, new THREE.PointsMaterial({ size:0.045, color:0x7ff0ff, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false }));
+scene.add(wind);
+
+function textSprite(text, color){
+  const c=document.createElement('canvas'); c.width=256; c.height=64; const g=c.getContext('2d');
+  g.font='600 34px system-ui, -apple-system, sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  g.shadowColor='rgba(0,0,0,0.9)'; g.shadowBlur=8; g.fillStyle=color; g.fillText(text,128,32);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthTest:false }));
+  s.scale.set(3.2,0.8,1); return s;
+}
+
+// ---- cities ----
+const cities = [
+  { id:'vantage', name:'Vantage', tag:'Capital · The Meridian', pos:[0,5.25,0], color:'#ffe08a',
+    desc:'Seat of the Grand Meridian Clock and the Vantarch. A city of bridges and clocktowers — and now, Unwound leaflets tacked to its lower tiers.',
+    people:'Faction: Clockwrights’ Guild · Present: Elian Voss, Vantarch Leth, Archwright Corval' },
+  { id:'salv', name:'Salv', tag:'Sunward port', pos:[1.6,1.8,4.8], color:'#ff9a4d',
+    desc:'Staging ground for the Heatfarer caravans. Hot, industrial, proud — and anxious, as the suncrystal seams thin.',
+    people:'Faction: Heatfarers’ Union · Present: Mara Solen' },
+  { id:'hollowlight', name:'Hollowlight', tag:'Frostward settlement', pos:[-2.0,-1.9,4.5], color:'#8fd0ff',
+    desc:'An Icebound research station lit by suncrystal lamps. Lector Verys has just sealed the chamber of the Engine.',
+    people:'Faction: Icebound Order · Present: Iska Tern, Lector Verys' }
+];
+const cityMarkers = [];
+for (const c of cities){
+  const p = new THREE.Vector3(c.pos[0], c.pos[1], c.pos[2]).normalize().multiplyScalar(5.06);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 16), new THREE.MeshBasicMaterial({ color: c.color }));
+  m.position.copy(p); m.userData = c; scene.add(m); cityMarkers.push(m);
+  const lbl = textSprite(c.name, c.color); lbl.position.copy(p.clone().multiplyScalar(1.14)); scene.add(lbl);
+  const pulse = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 16),
+    new THREE.MeshBasicMaterial({ color: c.color, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false }));
+  pulse.position.copy(p); scene.add(pulse); c.pulse = pulse;
+}
+
+// ---- orbit controls (custom) ----
+let dragging=false, downX=0, downY=0, lastX=0, lastY=0;
+canvas.addEventListener('pointerdown', e => { dragging=true; downX=lastX=e.clientX; downY=lastY=e.clientY; });
+window.addEventListener('pointermove', e => { if(!dragging) return; sph.theta -= (e.clientX-lastX)*0.005; sph.phi -= (e.clientY-lastY)*0.005; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('pointerup', () => dragging=false);
+canvas.addEventListener('wheel', e => { e.preventDefault(); sph.radius = Math.min(34, Math.max(7.5, sph.radius + e.deltaY*0.012)); }, { passive:false });
+
+// ---- interaction ----
+const raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+const panel = document.getElementById('panel');
+function showPanel(c){ document.getElementById('p-name').textContent=c.name; document.getElementById('p-tag').textContent=c.tag; document.getElementById('p-desc').textContent=c.desc; document.getElementById('p-people').textContent=c.people; panel.style.display='block'; }
+document.querySelector('#panel .close').onclick = function(){ panel.style.display='none'; };
+canvas.addEventListener('click', e => {
+  if (Math.hypot(e.clientX-downX, e.clientY-downY) > 6) return;
+  mouse.x=(e.clientX/innerWidth)*2-1; mouse.y=-(e.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse, camera); const hits = raycaster.intersectObjects(cityMarkers);
+  if (hits.length) showPanel(hits[0].object.userData);
+});
+
+// ---- synchronous first render + self-check (verification hook) ----
+renderer.render(scene, camera);
+window.__renderer = renderer; window.__scene = scene; window.__camera = camera;
+(function(){
+  let avgLuma = 0;
+  try { const cc=document.createElement('canvas'); cc.width=64; cc.height=64; const g=cc.getContext('2d'); g.drawImage(renderer.domElement,0,0,64,64); const d=g.getImageData(0,0,64,64).data; let s=0; for(let i=0;i<d.length;i+=4) s+=(d[i]+d[i+1]+d[i+2])/3; avgLuma = Math.round(s/(64*64)); } catch(e){}
+  window.__aeolInfo = { rendered:true, avgLuma: avgLuma, size:[renderer.domElement.width, renderer.domElement.height] };
+})();
+
+// ---- render loop ----
+const clock = new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const t = clock.getElapsedTime();
+  wind.rotation.x += 0.0016;
+  for (const c of cities){ const s = 1 + Math.sin(t*2.5 + c.pos[0])*0.28; c.pulse.scale.setScalar(Math.max(0.06, s*0.16)); }
+  if (!dragging) sph.theta += 0.0012;
+  sph.phi = Math.max(0.15, Math.min(Math.PI-0.15, sph.phi));
+  camera.position.set(
+    Math.sin(sph.phi)*Math.sin(sph.theta)*sph.radius,
+    Math.cos(sph.phi)*sph.radius,
+    Math.sin(sph.phi)*Math.cos(sph.theta)*sph.radius
+  );
+  camera.lookAt(0,0,0);
+  renderer.render(scene, camera);
+}
+tick();
+
+window.addEventListener('resize', function(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>

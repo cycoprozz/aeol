@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VANTAGE — walk the Meridian</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #04060d; font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif; color-scheme: dark; }
+  #scene { position: fixed; inset: 0; display: block; }
+  .hud { position: fixed; z-index: 10; color: var(--foreground, #e8ecf4); pointer-events: none; }
+  #title { top: 18px; left: 22px; }
+  #title h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: .22em; }
+  #title .sub { margin-top: 3px; font-size: 11px; letter-spacing: .12em; color: var(--muted-foreground, #8b95aa); }
+  #cast { top: 18px; right: 22px; text-align: right; font-size: 12px; line-height: 1.8; color: var(--muted-foreground, #b7c0d2); background: rgba(8,10,18,.5); border: 1px solid var(--border, rgba(255,255,255,.1)); border-radius: 10px; padding: 10px 14px; }
+  #cast .hd { font-size: 10px; letter-spacing: .16em; color: var(--muted-foreground, #8b95aa); margin-bottom: 4px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #hint { bottom: 18px; left: 22px; font-size: 11px; color: var(--muted-foreground, #9aa4b8); background: rgba(8,10,18,.5); border: 1px solid var(--border, rgba(255,255,255,.1)); border-radius: 8px; padding: 8px 12px; }
+  #ticker { bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--muted-foreground, #c3cbdd); background: rgba(8,10,18,.55); border: 1px solid var(--border, rgba(255,255,255,.1)); border-radius: 20px; padding: 7px 16px; white-space: nowrap; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; }
+  #overlay { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(10,14,26,.7), rgba(4,6,13,.94)); color: var(--foreground, #e8ecf4); cursor: pointer; text-align: center; }
+  #overlay h1 { font-size: 26px; letter-spacing: .28em; margin: 0 0 6px; }
+  #overlay .sub { color: var(--muted-foreground, #8b95aa); font-size: 13px; letter-spacing: .06em; margin-bottom: 26px; }
+  #overlay .enter { font-size: 13px; letter-spacing: .12em; padding: 10px 22px; border: 1px solid var(--accent, #7ff0ff); color: var(--accent, #7ff0ff); border-radius: 24px; }
+  #overlay .keys { margin-top: 18px; font-size: 11px; color: var(--muted-foreground, #6b7488); line-height: 1.7; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="title" class="hud"><h1>VANTAGE</h1><div class="sub">THE MERIDIAN · CYCLE 2 · PERMANENT TWILIGHT</div></div>
+<div id="cast" class="hud">
+  <div class="hd">WHO'S HERE NOW</div>
+  <span class="dot" style="background:#ffd66e"></span>Elian Voss · inspecting the escapement<br>
+  <span class="dot" style="background:#ff9a4d"></span>Mara Solen · petitioning the Vantarch<br>
+  <span class="dot" style="background:#8fd0ff"></span>Iska Tern · the Engine pulses twice<br>
+  <span class="dot" style="background:#6fa8dc"></span>Lector Verys · sealing the chamber<br>
+  <span class="dot" style="background:#e0cfa0"></span>Vantarch Leth · wardens tear down leaflets<br>
+  <span class="dot" style="background:#c0a060"></span>Archwright Corval · concealing the fault
+</div>
+<div id="hint" class="hud">WASD / arrows — walk &nbsp;·&nbsp; mouse — look &nbsp;·&nbsp; ESC — release</div>
+<div id="ticker" class="hud">The Aeolian wind carries ash from the Cinderwild.</div>
+<div id="overlay"><h1>VANTAGE</h1><div class="sub">A TIDALLY-LOCKED WORLD</div><div class="enter">CLICK TO ENTER</div><div class="keys">WASD to walk · drag / move mouse to look · ESC to release</div></div>
+
+<script src="three.min.js"></script>
+<script>
+window.onerror = function(m){ window.__aeolError = String(m); };
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace; else renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x1a2030, 26, 130);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 700);
+const up = new THREE.Vector3(0,1,0);
+const px = { x: 0, z: 18 }, look = { yaw: 0, pitch: -0.04 };
+const SPEED = 4.4;
+
+// ---- sky ----
+function skyTexture(){
+  const c=document.createElement('canvas'); c.width=64; c.height=256; const g=c.getContext('2d');
+  const grd=g.createLinearGradient(0,0,0,256);
+  grd.addColorStop(0,'#05070f'); grd.addColorStop(0.55,'#1b2a45'); grd.addColorStop(0.82,'#7a4a3a'); grd.addColorStop(1,'#e8964a');
+  g.fillStyle=grd; g.fillRect(0,0,64,256); return new THREE.CanvasTexture(c);
+}
+const sky = new THREE.Mesh(new THREE.SphereGeometry(520, 32, 24), new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false, depthWrite: false })); scene.add(sky);
+
+// ---- lights ----
+scene.add(new THREE.AmbientLight(0x223044, 0.7));
+const sunLight = new THREE.DirectionalLight(0xffe3b8, 2.1); sunLight.position.set(150, 22, 0);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.left = -80; sunLight.shadow.camera.right = 80;
+sunLight.shadow.camera.top = 80; sunLight.shadow.camera.bottom = -80;
+sunLight.shadow.camera.near = 20; sunLight.shadow.camera.far = 420;
+sunLight.shadow.bias = -0.0005;
+scene.add(sunLight);
+const frostFill = new THREE.PointLight(0x3355aa, 0.7, 160); frostFill.position.set(-90, 12, 0); scene.add(frostFill);
+
+// ---- the Sunstill ----
+function glowSprite(color, size){
+  const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
+  const grd=g.createRadialGradient(64,64,0,64,64,64); grd.addColorStop(0,'rgba(255,255,255,1)'); grd.addColorStop(0.22,color); grd.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grd; g.fillRect(0,0,128,128);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false }));
+  s.scale.set(size,size,1); return s;
+}
+const sun = new THREE.Mesh(new THREE.SphereGeometry(6, 32, 32), new THREE.MeshBasicMaterial({ color:0xfff0d0, fog:false })); sun.position.set(300, 34, 0); scene.add(sun);
+const sunGlow = glowSprite('#ffe0a0', 220); sunGlow.position.set(300, 34, 0); scene.add(sunGlow);
+
+// ---- ground ----
+function groundTexture(){
+  const c=document.createElement('canvas'); c.width=c.height=512; const g=c.getContext('2d');
+  g.fillStyle='#1a1e28'; g.fillRect(0,0,512,512);
+  g.strokeStyle='rgba(255,255,255,0.045)'; g.lineWidth=1;
+  for(let i=0;i<=512;i+=64){ g.beginPath(); g.moveTo(i,0); g.lineTo(i,512); g.stroke(); g.beginPath(); g.moveTo(0,i); g.lineTo(512,i); g.stroke(); }
+  g.strokeStyle='rgba(255,200,120,0.18)'; g.lineWidth=6; g.beginPath(); g.arc(256,256,110,0,Math.PI*2); g.stroke();
+  for(let a=0;a<Math.PI*2;a+=Math.PI/6){ g.strokeStyle='rgba(255,255,255,0.05)'; g.lineWidth=2; g.beginPath(); g.moveTo(256,256); g.lineTo(256+Math.cos(a)*256, 256+Math.sin(a)*256); g.stroke(); }
+  return new THREE.CanvasTexture(c);
+}
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshStandardMaterial({ map: groundTexture(), color: 0x9aa0b0, roughness: 0.95 }));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+
+// ---- materials / window texture ----
+const stone = new THREE.MeshStandardMaterial({ color: 0x262a34, roughness: 0.9 });
+function windowTexture(){
+  const c=document.createElement('canvas'); c.width=c.height=256; const g=c.getContext('2d');
+  g.fillStyle='#151720'; g.fillRect(0,0,256,256);
+  const cols=8, rows=12, cw=256/cols, ch=256/rows;
+  for(let x=0;x<cols;x++) for(let y=0;y<rows;y++) if(Math.random()<0.5){
+    const warm=Math.random()<0.72; g.fillStyle = warm ? 'rgba(255,210,140,'+(0.45+Math.random()*0.5)+')' : 'rgba(140,190,255,'+(0.4+Math.random()*0.5)+')';
+    g.fillRect(x*cw+6, y*ch+4, cw-12, ch-8);
+  }
+  return new THREE.CanvasTexture(c);
+}
+const winTex = windowTexture();
+
+// ---- buildings ----
+const buildings = [];
+function makeBuilding(x,z,w,d,h,color){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({ color: color||0x252934, roughness:0.85, emissive:0xffffff, emissiveMap: winTex, emissiveIntensity:0.7 }));
+  m.position.set(x, h/2, z); m.castShadow = true; m.receiveShadow = true; scene.add(m);
+  buildings.push({ minX:x-w/2, maxX:x+w/2, minZ:z-d/2, maxZ:z+d/2 });
+  return m;
+}
+for (let i=0;i<26;i++){
+  const a = (i/26)*Math.PI*2, r = 32 + (i%3)*5;
+  const w = 6+Math.random()*6, d = 6+Math.random()*6, h = 9+Math.random()*20;
+  makeBuilding(Math.cos(a)*r, Math.sin(a)*r, w, d, h, 0x22242d + (i%3)*0x010103);
+}
+makeBuilding(-16, 22, 10, 10, 15, 0x2c2530);   // Clockwrights' Guild
+makeBuilding(18, -20, 14, 14, 19, 0x33261f);   // Vantarch's Palace
+
+// ---- clocktower ----
+const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 3.2, 26, 24), new THREE.MeshStandardMaterial({ color:0x2b2f3c, roughness:0.9 }));
+tower.position.y = 13; tower.castShadow = true; tower.receiveShadow = true; scene.add(tower);
+buildings.push({ minX:-3.2, maxX:3.2, minZ:-3.2, maxZ:3.2 });
+const crown = new THREE.Mesh(new THREE.TorusGeometry(2.5, 0.4, 12, 36), new THREE.MeshBasicMaterial({ color:0xffd66e })); crown.position.y = 26.4; crown.rotation.x = Math.PI/2; scene.add(crown);
+function clockFaceTex(){
+  const c=document.createElement('canvas'); c.width=c.height=256; const g=c.getContext('2d');
+  g.fillStyle='#0c0e16'; g.beginPath(); g.arc(128,128,122,0,Math.PI*2); g.fill();
+  g.strokeStyle='#ffd66e'; g.lineWidth=6; g.beginPath(); g.arc(128,128,118,0,Math.PI*2); g.stroke();
+  for(let i=0;i<12;i++){ const a=i/12*Math.PI*2; g.beginPath(); g.moveTo(128+Math.cos(a)*104,128+Math.sin(a)*104); g.lineTo(128+Math.cos(a)*116,128+Math.sin(a)*116); g.stroke(); }
+  g.lineWidth=10; g.beginPath(); g.moveTo(128,128); g.lineTo(128,52); g.stroke();
+  return new THREE.CanvasTexture(c);
+}
+const face = new THREE.Mesh(new THREE.CircleGeometry(2.2, 40), new THREE.MeshBasicMaterial({ map: clockFaceTex() })); face.position.set(0, 15, 2.58); scene.add(face);
+const hand = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 0.06), new THREE.MeshBasicMaterial({ color:0xffd66e })); hand.position.set(0, 15, 2.66); scene.add(hand);
+
+// ---- lamps ----
+function lamp(x,z){
+  const g=new THREE.Group();
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.09,3.4,8), stone); pole.position.y=1.7; pole.castShadow=true;
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.24,12,12), new THREE.MeshBasicMaterial({ color:0xffd88a })); bulb.position.y=3.45;
+  const gl=glowSprite('#ffd88a',2.4); gl.position.y=3.45;
+  g.add(pole, bulb, gl); g.position.set(x,0,z); scene.add(g);
+}
+for (let i=0;i<10;i++){ const a=(i/10)*Math.PI*2; lamp(Math.cos(a)*26, Math.sin(a)*26); }
+
+// ---- market stalls ----
+function stall(x,z,color){
+  const g=new THREE.Group();
+  const base=new THREE.Mesh(new THREE.BoxGeometry(2.6,1.0,1.8), new THREE.MeshStandardMaterial({ color:0x3a2f22 })); base.position.y=0.5; base.castShadow=true; base.receiveShadow=true;
+  const awning=new THREE.Mesh(new THREE.BoxGeometry(2.9,0.16,2.1), new THREE.MeshStandardMaterial({ color, roughness:0.8 })); awning.position.y=1.25;
+  const p1=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,1.1,6), stone); p1.position.set(-1.15,0.55,0);
+  const p2=p1.clone(); p2.position.x=1.15;
+  g.add(base, awning, p1, p2); g.position.set(x,0,z); scene.add(g);
+}
+stall(-22,-16,0x7a3a2a); stall(-18,-18,0x2a5a6a); stall(-20,-12,0x6a5a2a); stall(-25,-14,0x4a2a5a);
+
+// ---- wind ----
+const WN = 800, wpos = new Float32Array(WN*3);
+for (let i=0;i<WN;i++){ wpos[i*3]=-45+Math.random()*90; wpos[i*3+1]=0.3+Math.random()*7; wpos[i*3+2]=-45+Math.random()*90; }
+const wgeom = new THREE.BufferGeometry(); wgeom.setAttribute('position', new THREE.BufferAttribute(wpos,3));
+const wind = new THREE.Points(wgeom, new THREE.PointsMaterial({ size:0.06, color:0x7ff0ff, transparent:true, opacity:0.5, blending:THREE.AdditiveBlending, depthWrite:false })); scene.add(wind);
+
+// ---- articulated humans ----
+const SKINS = [0xd8c4a8, 0xc8906a, 0x8a5a3a, 0x6b4433, 0xe8d0b0, 0xa8744f];
+const HAIRS = [0x1a1410, 0x3a2a18, 0x6a4a2a, 0x8a6a3a, 0x0e0e12, 0x5a5a62, 0x2a1a10];
+function limb(geo, mat){ const m=new THREE.Mesh(geo, mat); m.castShadow=true; return m; }
+function makeHuman(o){
+  const root = new THREE.Group();
+  const cloth = new THREE.MeshStandardMaterial({ color:o.color, roughness:0.8 });
+  const skinM = new THREE.MeshStandardMaterial({ color:o.skin, roughness:0.65 });
+  const hairM = new THREE.MeshStandardMaterial({ color:o.hair, roughness:0.9 });
+  const dark = new THREE.MeshStandardMaterial({ color:0x15161c, roughness:0.6 });
+
+  const hips = new THREE.Group(); hips.position.y = 0.9; root.add(hips);
+
+  const torso = limb(new THREE.CylinderGeometry(0.13, 0.19, 0.52, 12), cloth); torso.position.y = 0.26; hips.add(torso);
+
+  const headG = new THREE.Group(); headG.position.y = 0.52; hips.add(headG);
+  const head = limb(new THREE.SphereGeometry(0.135, 16, 16), skinM); head.position.y = 0.17;
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.145, 16, 12, 0, Math.PI*2, 0, Math.PI*0.55), hairM); hairCap.position.y = 0.18;
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), dark); eyeL.position.set(-0.045, 0.18, 0.125);
+  const eyeR = eyeL.clone(); eyeR.position.x = 0.045;
+  headG.add(head, hairCap, eyeL, eyeR);
+
+  function arm(side){
+    const g = new THREE.Group(); g.position.set(side*0.16, 0.5, 0);
+    const upper = limb(new THREE.CylinderGeometry(0.035, 0.045, 0.26, 8), cloth); upper.position.y = -0.13;
+    const elbow = new THREE.Group(); elbow.position.y = -0.26;
+    const fore = limb(new THREE.CylinderGeometry(0.03, 0.035, 0.24, 8), cloth); fore.position.y = -0.12;
+    const hand = limb(new THREE.SphereGeometry(0.04, 8, 8), skinM); hand.position.y = -0.24;
+    elbow.add(fore, hand); g.add(upper, elbow); hips.add(g);
+    return { g:g, elbow:elbow };
+  }
+  function leg(side){
+    const g = new THREE.Group(); g.position.set(side*0.095, 0, 0);
+    const thigh = limb(new THREE.CylinderGeometry(0.055, 0.05, 0.45, 8), cloth); thigh.position.y = -0.22;
+    const knee = new THREE.Group(); knee.position.y = -0.45;
+    const shin = limb(new THREE.CylinderGeometry(0.045, 0.04, 0.42, 8), cloth); shin.position.y = -0.2;
+    const foot = limb(new THREE.BoxGeometry(0.07, 0.06, 0.16), dark); foot.position.set(0, -0.42, 0.05);
+    knee.add(shin, foot); g.add(thigh, knee); hips.add(g);
+    return { g:g, knee:knee };
+  }
+  const armL = arm(-1), armR = arm(1), legL = leg(-1), legR = leg(1);
+  root.userData = { hips, armL, armR, legL, legR };
+  root.scale.setScalar(o.scale || 1);
+  return root;
+}
+
+function npcLabel(name, action, color){
+  const c=document.createElement('canvas'); c.width=512; c.height=96; const g=c.getContext('2d');
+  g.font='600 32px system-ui, sans-serif'; g.textAlign='center';
+  g.shadowColor='rgba(0,0,0,0.9)'; g.shadowBlur=8;
+  g.fillStyle=color; g.fillText(name, 256, 36);
+  g.font='400 22px system-ui, sans-serif'; g.fillStyle='rgba(255,255,255,0.85)'; g.fillText(action, 256, 72);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthTest:false }));
+  s.scale.set(3.8, 0.72, 1); return s;
+}
+
+const npcs = [];
+function addNPC(o){
+  const g = makeHuman(o); g.position.set(o.x, 0, o.z); scene.add(g);
+  if (o.name){ const lbl=npcLabel(o.name, o.action, o.color); lbl.position.y=2.1; g.add(lbl); }
+  const ctl = { group:g, wps:o.waypoints, i:0, speed:o.speed||1.7, phase:Math.random()*6 };
+  ctl.update = function(t, dt){
+    const target=this.wps[this.i], dx=target[0]-this.group.position.x, dz=target[1]-this.group.position.z;
+    const dist=Math.hypot(dx,dz);
+    if (dist < 0.4){ this.i=(this.i+1)%this.wps.length; }
+    else { const step=Math.min(dist, this.speed*dt); this.group.position.x += dx/dist*step; this.group.position.z += dz/dist*step; this.group.rotation.y = Math.atan2(dx, dz); }
+    const u=this.group.userData, w=t*6+this.phase, s=Math.sin(w);
+    u.legL.g.rotation.x = s*0.5; u.legR.g.rotation.x = -s*0.5;
+    u.legL.knee.rotation.x = Math.max(0, Math.sin(w+2.2))*0.6; u.legR.knee.rotation.x = Math.max(0, Math.sin(w+2.2+Math.PI))*0.6;
+    u.armL.g.rotation.x = -s*0.45; u.armR.g.rotation.x = s*0.45;
+    u.armL.elbow.rotation.x = Math.max(0,-s)*0.3; u.armR.elbow.rotation.x = Math.max(0,s)*0.3;
+    u.hips.position.y = 0.9 + Math.abs(s)*0.03; u.hips.rotation.x = 0.05; u.hips.rotation.z = s*0.02;
+  };
+  npcs.push(ctl); return ctl;
+}
+
+addNPC({ x:-12, z:18, color:0xffd66e, skin:0xd8c4a8, hair:0x1a1410, name:'Elian Voss', action:'inspecting the escapement', speed:1.5, waypoints:[[-16,20],[-8,12],[-3,5],[3,5],[8,12]] });
+const mara = addNPC({ x:20, z:6, color:0xff9a4d, skin:0xc8906a, hair:0x0e0e12, name:'Mara Solen', action:'petitioning the Vantarch', speed:1.1, waypoints:[[22,8],[28,4],[24,-6],[18,-2]] });
+addNPC({ x:-24, z:-4, color:0x8fd0ff, skin:0xe8d0b0, hair:0x6a4a2a, name:'Iska Tern', action:'the Engine pulses twice', speed:1.9, waypoints:[[-26,-6],[-30,2],[-24,10]] });
+addNPC({ x:-27, z:-10, color:0x6fa8dc, skin:0xa8744f, hair:0x5a5a62, name:'Lector Verys', action:'sealing the chamber', speed:0.9, waypoints:[[-28,-10],[-24,-4]] });
+addNPC({ x:16, z:-12, color:0xe0cfa0, skin:0x8a5a3a, hair:0x3a2a18, name:'Vantarch Leth', action:'wardens tear down leaflets', speed:1.2, waypoints:[[18,-14],[22,-22],[14,-26]] });
+addNPC({ x:-14, z:26, color:0xc0a060, skin:0x6b4433, hair:0x2a1a10, name:'Archwright Corval', action:'concealing the fault', speed:0.7, waypoints:[[-16,26],[-10,22]] });
+const leafletNpc = addNPC({ x:-34, z:-26, color:0x7ff0ff, skin:0xd8c4a8, hair:0x1a1410, name:'An Unwound hand', action:'tacking a leaflet', speed:2.3, waypoints:[[-36,-28],[-30,-36],[-24,-30],[-32,-22]] });
+const citizenClothes=[0x9aa4b8,0xa8b0c0,0x8b95aa,0x7a6a5a,0x5a6a7a,0x6a5a4a];
+for (let i=0;i<8;i++){
+  const wps=[]; for(let j=0;j<4;j++){ const a=Math.random()*Math.PI*2, r=8+Math.random()*16; wps.push([Math.cos(a)*r, Math.sin(a)*r]); }
+  addNPC({ x:wps[0][0], z:wps[0][1], color:citizenClothes[i%6], skin:SKINS[Math.floor(Math.random()*SKINS.length)], hair:HAIRS[Math.floor(Math.random()*HAIRS.length)], waypoints:wps, speed:1.2+Math.random()*0.9, scale:0.95+Math.random()*0.1 });
+}
+
+// Mara's crystal cart
+function crystalCart(){
+  const g=new THREE.Group();
+  const base=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.5,1.2), new THREE.MeshStandardMaterial({ color:0x3a2f22 })); base.position.y=0.38; base.castShadow=true;
+  const wheel=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,0.1,12), new THREE.MeshStandardMaterial({ color:0x14161c })); wheel.rotation.z=Math.PI/2; wheel.position.set(-0.45,0.28,0);
+  const wheel2=wheel.clone(); wheel2.position.x=0.45;
+  const crystal=new THREE.Mesh(new THREE.OctahedronGeometry(0.35,0), new THREE.MeshBasicMaterial({ color:0xff9a4d })); crystal.position.y=1.0;
+  const gl=glowSprite('#ff9a4d',1.7); gl.position.y=1.0;
+  g.add(base, wheel, wheel2, crystal, gl); return g;
+}
+const cart = crystalCart(); cart.position.set(0,0,0.95); mara.group.add(cart);
+
+// ---- leaflets ----
+const leaflets = []; let leafletTimer = 0;
+
+// ---- first-person controls ----
+let entered=false, locked=false, dragging=false, lastX=0, lastY=0;
+const keys = {};
+addEventListener('keydown', e => keys[e.code]=true);
+addEventListener('keyup', e => keys[e.code]=false);
+const overlay = document.getElementById('overlay');
+overlay.addEventListener('click', () => { entered=true; overlay.style.display='none'; try { canvas.requestPointerLock(); } catch(e){} });
+document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; });
+document.addEventListener('pointerlockerror', () => { locked=false; });
+canvas.addEventListener('mousedown', e => { dragging=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('mouseup', () => dragging=false);
+window.addEventListener('mousemove', e => {
+  if (locked){ look.yaw -= e.movementX*0.0022; look.pitch -= e.movementY*0.0022; }
+  else if (dragging && entered){ look.yaw -= (e.clientX-lastX)*0.004; look.pitch -= (e.clientY-lastY)*0.004; lastX=e.clientX; lastY=e.clientY; }
+  look.pitch = Math.max(-1.4, Math.min(1.4, look.pitch));
+});
+
+function collide(pxx, pzz){
+  const r=0.55;
+  for (const b of buildings){
+    if (pxx > b.minX-r && pxx < b.maxX+r && pzz > b.minZ-r && pzz < b.maxZ+r){
+      const dl=pxx-(b.minX-r), dr=(b.maxX+r)-pxx, dt=pzz-(b.minZ-r), db=(b.maxZ+r)-pzz;
+      const m=Math.min(dl,dr,dt,db);
+      if (m===dl) pxx=b.minX-r; else if (m===dr) pxx=b.maxX+r; else if (m===dt) pzz=b.minZ-r; else pzz=b.maxZ+r;
+    }
+  }
+  return [pxx, pzz];
+}
+
+// ---- ticker ----
+const msgs = ["Mara Solen waits outside the Vantarch's relay-office", "Iska Tern records a second tone from the Engine", "An Unwound hand tacks a leaflet to a wall", "Elian Voss studies the Grand Clock's escapement", "The Aeolian wind carries ash from the Cinderwild", "Wardens pull down the leaflets, one by one", "The Grand Clock skips — a tick no one was meant to hear"];
+let ti=0; setInterval(() => { ti=(ti+1)%msgs.length; document.getElementById('ticker').textContent = msgs[ti]; }, 4200);
+
+// ---- animate ----
+const clock = new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const t = clock.getElapsedTime(), dt = Math.min(0.05, clock.getDelta());
+  const wp = wind.geometry.attributes.position.array;
+  for (let i=0;i<WN;i++){ wp[i*3] += dt*2.6; if (wp[i*3] > 45) wp[i*3] = -45; }
+  wind.geometry.attributes.position.needsUpdate = true;
+  hand.rotation.z = t*0.25;
+  for (const n of npcs) n.update(t, dt);
+  leafletTimer += dt;
+  if (leafletTimer > 2.8){ leafletTimer=0;
+    const l=new THREE.Mesh(new THREE.PlaneGeometry(0.3,0.42), new THREE.MeshBasicMaterial({ color:0x7ff0ff, side:THREE.DoubleSide }));
+    l.position.copy(leafletNpc.group.position); l.position.y+=0.4; l.rotation.y=Math.random()*Math.PI;
+    scene.add(l); leaflets.push(l); if (leaflets.length>50){ const old=leaflets.shift(); scene.remove(old); }
+  }
+  if (entered){
+    const fx=-Math.sin(look.yaw), fz=-Math.cos(look.yaw), rx=Math.cos(look.yaw), rz=-Math.sin(look.yaw);
+    let mx=0, mz=0;
+    if (keys['KeyW']||keys['ArrowUp']){ mx+=fx; mz+=fz; } if (keys['KeyS']||keys['ArrowDown']){ mx-=fx; mz-=fz; }
+    if (keys['KeyD']||keys['ArrowRight']){ mx+=rx; mz+=rz; } if (keys['KeyA']||keys['ArrowLeft']){ mx-=rx; mz-=rz; }
+    const len=Math.hypot(mx,mz);
+    if (len>0){ mx/=len; mz/=len; px.x += mx*SPEED*dt; px.z += mz*SPEED*dt; }
+    let c=collide(px.x, px.z); px.x=c[0]; px.z=c[1];
+    const rad=Math.hypot(px.x, px.z); if (rad>56){ px.x*=56/rad; px.z*=56/rad; }
+  }
+  camera.position.set(px.x, 1.7, px.z);
+  camera.rotation.order='YXZ'; camera.rotation.set(look.pitch, look.yaw, 0);
+  renderer.render(scene, camera);
+}
+tick();
+
+// ---- synchronous first render + self-check ----
+renderer.render(scene, camera);
+window.__renderer=renderer; window.__scene=scene; window.__camera=camera;
+(function(){
+  let avgLuma=0;
+  try { const cc=document.createElement('canvas'); cc.width=64; cc.height=64; const g=cc.getContext('2d'); g.drawImage(renderer.domElement,0,0,64,64); const d=g.getImageData(0,0,64,64).data; let s=0; for(let i=0;i<d.length;i+=4) s+=(d[i]+d[i+1]+d[i+2])/3; avgLuma=Math.round(s/(64*64)); } catch(e){}
+  window.__worldInfo = { rendered:true, avgLuma: avgLuma, npcs: npcs.length, buildings: buildings.length, shadows: renderer.shadowMap.enabled, size:[renderer.domElement.width, renderer.domElement.height] };
+})();
+
+window.addEventListener('resize', function(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
